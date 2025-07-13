@@ -194,6 +194,11 @@ def main_worker(gpu, ngpus_per_node, args):
     val_loader = torch.utils.data.DataLoader(
         val_dataset, batch_size=100, shuffle=False,
         num_workers=args.workers, pin_memory=True)
+    # ------------------------- 损失函数实例 -------------------------
+
+    ldam_loss = LDAMLoss(cls_num_list=cls_num_list, max_m=0.5, s=30).to(device)  # MOD
+    paco_loss = PaCoLoss(cls_num_list=cls_num_list, alpha=1.0, beta=1.0,
+                         gamma=1.0, temperature=0.2, base_temperature=0.2).to(device)  # MOD
 
     # init log for training
     log_training = open(os.path.join(args.root_log, args.store_name, 'log_train.csv'), 'w')
@@ -201,6 +206,8 @@ def main_worker(gpu, ngpus_per_node, args):
     with open(os.path.join(args.root_log, args.store_name, 'args.txt'), 'w') as f:
         f.write(str(args))
     tf_writer = SummaryWriter(log_dir=os.path.join(args.root_log, args.store_name))
+
+
     for epoch in range(args.start_epoch, args.epochs):
         adjust_learning_rate(optimizer, epoch, args)
 
@@ -235,6 +242,11 @@ def main_worker(gpu, ngpus_per_node, args):
         elif args.loss_type == 'Focal':
             criterion = FocalLoss(weight=per_cls_weights, gamma=1).to(args.device)
         elif args.loss_type == 'PaCo':
+            citerion = PaCoLoss(cls_num_list=cls_num_list, max_m=0.5, s=30, weight=per_cls_weights).to(args.device)
+        elif args.loss_type == 'PaCoLDAM':
+            ldam_criterion = LDAMLoss(cls_num_list=cls_num_list, max_m=0.5, s=30, weight=per_cls_weights).to(args.device)
+            paco_criterion = PaCoLoss(cls_num_list=cls_num_list, alpha=1.0, beta=1.0, gamma=1.0, supt=1.0, temperature=0.2, base_temperature=0.2).to(args.device)
+            
         else:
             warnings.warn('Loss type is not listed')
             return
