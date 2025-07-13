@@ -19,14 +19,14 @@ from tensorboardX import SummaryWriter
 from sklearn.metrics import confusion_matrix
 from utils import *
 from imbalance_cifar import IMBALANCECIFAR10, IMBALANCECIFAR100
-from losses import LDAMLoss, FocalLoss
+from losses import LDAMLoss, FocalLoss, PaCoLoss
 
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
     and callable(models.__dict__[name]))
 
 parser = argparse.ArgumentParser(description='PyTorch Cifar Training')
-parser.add_argument('--dataset', default='cifar10', help='dataset setting')
+parser.add_argument('--dataset', default='cifar100', help='dataset setting')
 parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet32',
                     choices=model_names,
                     help='model architecture: ' +
@@ -85,54 +85,75 @@ def main():
                       'You may see unexpected behavior when restarting '
                       'from checkpoints.')
 
-    if args.gpu is not None:
-        warnings.warn('You have chosen a specific GPU. This will completely '
-                      'disable data parallelism.')
+    # 自动检测设备
+    if torch.cuda.is_available():
+        args.device = torch.device('cuda')
+    elif torch.backends.mps.is_available():
+        args.device = torch.device('mps')
+    else:
+        args.device = torch.device('cpu')
 
-    ngpus_per_node = torch.cuda.device_count()
-    main_worker(args.gpu, ngpus_per_node, args)
+    if args.gpu is not None and torch.cuda.is_available():
+        warnings.warn('You have chosen a specific GPU. This will completely disable data parallelism.')
+        args.device = torch.device('cuda:' + str(args.gpu))
+
+    ngpus_per_node = torch.cuda.device_count() if torch.cuda.is_available() else 1
+    main_worker(args.device, ngpus_per_node, args)
 
 
 def main_worker(gpu, ngpus_per_node, args):
     global best_acc1
     args.gpu = gpu
+    args.device = gpu
 
     if args.gpu is not None:
-        print("Use GPU: {} for training".format(args.gpu))
+        print(f"Use GPU: {args.gpu} for training")
 
     # create model
-    print("=> creating model '{}'".format(args.arch))
+    print(f"=> creating model '{args.arch}'")
     num_classes = 100 if args.dataset == 'cifar100' else 10
     use_norm = True if args.loss_type == 'LDAM' else False
     model = models.__dict__[args.arch](num_classes=num_classes, use_norm=use_norm)
 
-    if args.gpu is not None:
-        torch.cuda.set_device(args.gpu)
-        model = model.cuda(args.gpu)
+    # 只在cuda设备时调用cuda相关操作
+    if args.device.type == 'cuda':
+        if args.gpu is not None:
+            torch.cuda.set_device(args.gpu)
+            model = model.cuda(args.gpu)
+        else:
+            model = torch.nn.DataParallel(model).cuda()
+    elif args.device.type == 'mps':
+        model = model.to(args.device)
     else:
-        # DataParallel will divide and allocate batch_size to all available GPUs
-        model = torch.nn.DataParallel(model).cuda()
+        model = model.to('cpu')
 
     optimizer = torch.optim.SGD(model.parameters(), args.lr,
                                 momentum=args.momentum,
                                 weight_decay=args.weight_decay)
 
-    # optionally resume from a checkpoint
-    if args.resume:
-        if os.path.isfile(args.resume):
-            print("=> loading checkpoint '{}'".format(args.resume))
-            checkpoint = torch.load(args.resume, map_location='cuda:0')
-            args.start_epoch = checkpoint['epoch']
-            best_acc1 = checkpoint['best_acc1']
-            if args.gpu is not None:
-                # best_acc1 may be from a checkpoint from a different GPU
-                best_acc1 = best_acc1.to(args.gpu)
-            model.load_state_dict(checkpoint['state_dict'])
-            optimizer.load_state_dict(checkpoint['optimizer'])
-            print("=> loaded checkpoint '{}' (epoch {})"
-                  .format(args.resume, checkpoint['epoch']))
+    print(f"Use device: {args.device} for training")
+    if os.path.isfile(args.resume):
+        print("=> loading checkpoint '{}'".format(args.resume))
+        checkpoint = torch.load(args.resume, map_location='cuda:0')
+        args.start_epoch = checkpoint['epoch']
+        best_acc1 = checkpoint['best_acc1']
+        if args.gpu is not None:
+            # best_acc1 may be from a checkpoint from a different GPU
+            pass
+    if args.device.type == 'cuda':
+        if args.gpu is not None:
+            torch.cuda.set_device(args.device)
+            model = model.to(args.device)
         else:
-            print("=> no checkpoint found at '{}'".format(args.resume))
+            model = torch.nn.DataParallel(model).cuda()
+    elif args.device.type == 'mps':
+        model = model.to(args.device)
+    else:
+        model = model.to('cpu')
+    if not os.path.isfile(args.resume):
+        print("=> no checkpoint found at '{}'".format(args.resume))
+    
+    
 
     cudnn.benchmark = True
 
@@ -195,7 +216,7 @@ def main_worker(gpu, ngpus_per_node, args):
             effective_num = 1.0 - np.power(beta, cls_num_list)
             per_cls_weights = (1.0 - beta) / np.array(effective_num)
             per_cls_weights = per_cls_weights / np.sum(per_cls_weights) * len(cls_num_list)
-            per_cls_weights = torch.FloatTensor(per_cls_weights).cuda(args.gpu)
+            per_cls_weights = torch.FloatTensor(per_cls_weights).to(args.device)
         elif args.train_rule == 'DRW':
             train_sampler = None
             idx = epoch // 160
@@ -203,16 +224,17 @@ def main_worker(gpu, ngpus_per_node, args):
             effective_num = 1.0 - np.power(betas[idx], cls_num_list)
             per_cls_weights = (1.0 - betas[idx]) / np.array(effective_num)
             per_cls_weights = per_cls_weights / np.sum(per_cls_weights) * len(cls_num_list)
-            per_cls_weights = torch.FloatTensor(per_cls_weights).cuda(args.gpu)
+            per_cls_weights = torch.FloatTensor(per_cls_weights).to(args.device)
         else:
             warnings.warn('Sample rule is not listed')
         
         if args.loss_type == 'CE':
-            criterion = nn.CrossEntropyLoss(weight=per_cls_weights).cuda(args.gpu)
+            criterion = nn.CrossEntropyLoss(weight=per_cls_weights).to(args.device)
         elif args.loss_type == 'LDAM':
-            criterion = LDAMLoss(cls_num_list=cls_num_list, max_m=0.5, s=30, weight=per_cls_weights).cuda(args.gpu)
+            criterion = LDAMLoss(cls_num_list=cls_num_list, max_m=0.5, s=30, weight=per_cls_weights).to(args.device)
         elif args.loss_type == 'Focal':
-            criterion = FocalLoss(weight=per_cls_weights, gamma=1).cuda(args.gpu)
+            criterion = FocalLoss(weight=per_cls_weights, gamma=1).to(args.device)
+        elif args.loss_type == 'PaCo':
         else:
             warnings.warn('Loss type is not listed')
             return
@@ -257,9 +279,8 @@ def train(train_loader, model, criterion, optimizer, epoch, args, log, tf_writer
         # measure data loading time
         data_time.update(time.time() - end)
 
-        if args.gpu is not None:
-            input = input.cuda(args.gpu, non_blocking=True)
-        target = target.cuda(args.gpu, non_blocking=True)
+        input = input.to(args.device, non_blocking=True)
+        target = target.to(args.device, non_blocking=True)
 
         # compute output
         output = model(input)
@@ -311,9 +332,8 @@ def validate(val_loader, model, criterion, epoch, args, log=None, tf_writer=None
     with torch.no_grad():
         end = time.time()
         for i, (input, target) in enumerate(val_loader):
-            if args.gpu is not None:
-                input = input.cuda(args.gpu, non_blocking=True)
-            target = target.cuda(args.gpu, non_blocking=True)
+            input = input.to(args.device, non_blocking=True)
+            target = target.to(args.device, non_blocking=True)
 
             # compute output
             output = model(input)
