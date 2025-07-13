@@ -19,7 +19,8 @@ from tensorboardX import SummaryWriter
 from sklearn.metrics import confusion_matrix
 from utils import *
 from imbalance_cifar import IMBALANCECIFAR10, IMBALANCECIFAR100
-from losses import LDAMLoss, FocalLoss, PaCoLoss
+from losses import LDAMLoss, PaCoLoss, FocalLoss
+from balanced_augmentation import BalancedAugmentedCIFAR
 
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
@@ -68,6 +69,9 @@ parser.add_argument('--gpu', default=None, type=int,
                     help='GPU id to use.')
 parser.add_argument('--root_log',type=str, default='log')
 parser.add_argument('--root_model', type=str, default='checkpoint')
+parser.add_argument('--balanced_aug', action='store_true',
+                    help='use BalancedAugmentedCIFAR as training set')
+
 best_acc1 = 0
 
 
@@ -196,9 +200,9 @@ def main_worker(gpu, ngpus_per_node, args):
         num_workers=args.workers, pin_memory=True)
     # ------------------------- 损失函数实例 -------------------------
 
-    ldam_loss = LDAMLoss(cls_num_list=cls_num_list, max_m=0.5, s=30).to(device)  # MOD
-    paco_loss = PaCoLoss(cls_num_list=cls_num_list, alpha=1.0, beta=1.0,
-                         gamma=1.0, temperature=0.2, base_temperature=0.2).to(device)  # MOD
+    ldam_criterion = LDAMLoss(cls_num_list=cls_num_list, max_m=0.5, s=30).to(args.device)
+    paco_criterion = PaCoLoss(cls_num_list=cls_num_list, alpha=1.0, beta=1.0,
+                              gamma=1.0, temperature=0.2, base_temperature=0.2).to(args.device)
 
     # init log for training
     log_training = open(os.path.join(args.root_log, args.store_name, 'log_train.csv'), 'w')
@@ -210,6 +214,38 @@ def main_worker(gpu, ngpus_per_node, args):
 
     for epoch in range(args.start_epoch, args.epochs):
         adjust_learning_rate(optimizer, epoch, args)
+        epoch_idx = epoch + 1
+        if epoch_idx == 51:                  # 第 51 个 epoch（从 1 开始数）
+            print("\n>>> Switching to BalancedAugmentedCIFAR for stronger augmentation …")
+            train_dataset = BalancedAugmentedCIFAR(train_dataset, cls_num_list)
+
+            # 重新构建 dataloader
+            train_loader = torch.utils.data.DataLoader(
+                train_dataset,
+                batch_size=args.batch_size,
+                shuffle=True,                 # 有了重采样无需 sampler
+                num_workers=args.workers,
+                pin_memory=True
+            )
+
+            # 数据量 / 类别分布变了 → 重新计算 cls_num_list 与损失
+            cls_num_list = train_dataset.get_cls_num_list()
+            ldam_criterion = LDAMLoss(cls_num_list, max_m=0.5, s=30).to(args.device)
+            paco_criterion = PaCoLoss(cls_num_list, alpha=1.0, beta=1.0,
+                                    gamma=1.0, temperature=0.2,
+                                    base_temperature=0.2).to(args.device)
+        if epoch_idx <= 20:
+            # 1-20 → 纯 LDAM
+            criterion = ldam_criterion
+            use_paco  = False
+        elif 21 <= epoch_idx <= 160 and epoch_idx % 10 in (8, 9, 0, 1, 2):
+            # 21-160 中，每个 10 轮区间的最后3轮 (…8, …9, …0) → PaCo
+            criterion = paco_criterion
+            use_paco  = True
+        else:
+            # 其他情况 → LDAM
+            criterion = ldam_criterion
+            use_paco  = False
 
         if args.train_rule == 'None':
             train_sampler = None  
@@ -236,26 +272,37 @@ def main_worker(gpu, ngpus_per_node, args):
             warnings.warn('Sample rule is not listed')
         
         if args.loss_type == 'CE':
-            criterion = nn.CrossEntropyLoss(weight=per_cls_weights).to(args.device)
+            ce_criterion   = nn.CrossEntropyLoss(weight=per_cls_weights).to(args.device)
+
         elif args.loss_type == 'LDAM':
-            criterion = LDAMLoss(cls_num_list=cls_num_list, max_m=0.5, s=30, weight=per_cls_weights).to(args.device)
+            ldam_criterion = LDAMLoss(cls_num_list=cls_num_list,
+                                      max_m=0.5, s=30,
+                                      weight=per_cls_weights).to(args.device)
+
         elif args.loss_type == 'Focal':
-            criterion = FocalLoss(weight=per_cls_weights, gamma=1).to(args.device)
+            focal_criterion = FocalLoss(weight=per_cls_weights, gamma=1).to(args.device)
+
         elif args.loss_type == 'PaCo':
-            citerion = PaCoLoss(cls_num_list=cls_num_list, max_m=0.5, s=30, weight=per_cls_weights).to(args.device)
+            paco_criterion = PaCoLoss(cls_num_list=cls_num_list,
+                                      alpha=1.0, beta=1.0, gamma=1.0,
+                                      temperature=0.2).to(args.device)
+
         elif args.loss_type == 'PaCoLDAM':
-            ldam_criterion = LDAMLoss(cls_num_list=cls_num_list, max_m=0.5, s=30, weight=per_cls_weights).to(args.device)
-            paco_criterion = PaCoLoss(cls_num_list=cls_num_list, alpha=1.0, beta=1.0, gamma=1.0, supt=1.0, temperature=0.2, base_temperature=0.2).to(args.device)
-            
+            ldam_criterion = LDAMLoss(cls_num_list=cls_num_list,
+                                      max_m=0.5, s=30,
+                                      weight=per_cls_weights).to(args.device)
+            paco_criterion = PaCoLoss(cls_num_list=cls_num_list,
+                                      alpha=1.0, beta=0.05, gamma=1.0,
+                                      temperature=0.2).to(args.device)
         else:
             warnings.warn('Loss type is not listed')
             return
 
         # train for one epoch
-        train(train_loader, model, criterion, optimizer, epoch, args, log_training, tf_writer)
+        train(train_loader, model, criterion, optimizer, epoch, args, log_training, tf_writer, use_paco)
         
         # evaluate on validation set
-        acc1 = validate(val_loader, model, criterion, epoch, args, log_testing, tf_writer)
+        acc1 = validate(val_loader, model, ldam_criterion, epoch, args, log_testing, tf_writer)
 
         # remember best acc@1 and save checkpoint
         is_best = acc1 > best_acc1
@@ -263,6 +310,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
         tf_writer.add_scalar('acc/test_top1_best', best_acc1, epoch)
         output_best = 'Best Prec@1: %.3f\n' % (best_acc1)
+        print(f"Current loss type: {'PaCo' if use_paco else 'LDAM'}")
         print(output_best)
         log_testing.write(output_best + '\n')
         log_testing.flush()
@@ -276,60 +324,62 @@ def main_worker(gpu, ngpus_per_node, args):
         }, is_best)
 
 
-def train(train_loader, model, criterion, optimizer, epoch, args, log, tf_writer):
+def train(train_loader, model, criterion, optimizer, epoch,
+          args, log_file, tf_writer, use_paco):
     batch_time = AverageMeter('Time', ':6.3f')
-    data_time = AverageMeter('Data', ':6.3f')
-    losses = AverageMeter('Loss', ':.4e')
-    top1 = AverageMeter('Acc@1', ':6.2f')
-    top5 = AverageMeter('Acc@5', ':6.2f')
-    
-    # switch to train mode
-    model.train()
+    data_time  = AverageMeter('Data', ':6.3f')
+    losses     = AverageMeter('Loss', ':.4e')
+    top1       = AverageMeter('Acc@1', ':6.2f')
+    top5       = AverageMeter('Acc@5', ':6.2f')
 
+    model.train()
     end = time.time()
-    for i, (input, target) in enumerate(train_loader):
-        # measure data loading time
+    for i, (inp, target) in enumerate(train_loader):
         data_time.update(time.time() - end)
 
-        input = input.to(args.device, non_blocking=True)
+        inp    = inp.to(args.device, non_blocking=True)
         target = target.to(args.device, non_blocking=True)
 
-        # compute output
-        output = model(input)
-        loss = criterion(output, target)
+        if use_paco:                                      # PaCoLoss
+            logits, feats = model(inp, return_feat=True)
+            loss          = criterion(feats, logits, target)
+            out_for_acc   = logits
+        else:                                             # 其余损失
+            logits       = model(inp)
+            loss         = criterion(logits, target)
+            out_for_acc  = logits
 
-        # measure accuracy and record loss
-        acc1, acc5 = accuracy(output, target, topk=(1, 5))
-        losses.update(loss.item(), input.size(0))
-        top1.update(acc1[0], input.size(0))
-        top5.update(acc5[0], input.size(0))
+        acc1, acc5 = accuracy(out_for_acc, target, topk=(1, 5))
+        losses.update(loss.item(), inp.size(0))
+        top1.update(acc1[0],       inp.size(0))
+        top5.update(acc5[0],       inp.size(0))
 
-        # compute gradient and do SGD step
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
-        # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
 
         if i % args.print_freq == 0:
-            output = ('Epoch: [{0}][{1}/{2}], lr: {lr:.5f}\t'
-                      'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                      'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
-                      'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
-                      'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
-                      'Prec@5 {top5.val:.3f} ({top5.avg:.3f})'.format(
-                epoch, i, len(train_loader), batch_time=batch_time,
-                data_time=data_time, loss=losses, top1=top1, top5=top5, lr=optimizer.param_groups[-1]['lr'] * 0.1))  # TODO
-            print(output)
-            log.write(output + '\n')
-            log.flush()
+            msg = ('Epoch: [{0}][{1}/{2}], lr: {lr:.5f}\t'
+                   'Time {bt.val:.3f} ({bt.avg:.3f})\t'
+                   'Data {dt.val:.3f} ({dt.avg:.3f})\t'
+                   'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
+                   'Acc@1 {top1.val:.3f} ({top1.avg:.3f})\t'
+                   'Acc@5 {top5.val:.3f} ({top5.avg:.3f})'
+                   .format(epoch, i, len(train_loader),
+                           lr=optimizer.param_groups[0]['lr'],
+                           bt=batch_time, dt=data_time,
+                           loss=losses, top1=top1, top5=top5))
+            print(msg)
+            log_file.write(msg + '\n')
+            log_file.flush()
 
-    tf_writer.add_scalar('loss/train', losses.avg, epoch)
-    tf_writer.add_scalar('acc/train_top1', top1.avg, epoch)
-    tf_writer.add_scalar('acc/train_top5', top5.avg, epoch)
-    tf_writer.add_scalar('lr', optimizer.param_groups[-1]['lr'], epoch)
+    tf_writer.add_scalar('loss/train',      losses.avg, epoch)
+    tf_writer.add_scalar('acc/train_top1',  top1.avg,  epoch)
+    tf_writer.add_scalar('acc/train_top5',  top5.avg,  epoch)
+    tf_writer.add_scalar('lr', optimizer.param_groups[0]['lr'], epoch)
 
 def validate(val_loader, model, criterion, epoch, args, log=None, tf_writer=None, flag='val'):
     batch_time = AverageMeter('Time', ':6.3f')
@@ -404,6 +454,10 @@ def adjust_learning_rate(optimizer, epoch, args):
         lr = args.lr * 0.0001
     elif epoch > 160:
         lr = args.lr * 0.01
+    elif epoch > 100:
+        lr = args.lr * 0.1
+    elif epoch > 50:
+        lr = args.lr * 0.3
     else:
         lr = args.lr
     for param_group in optimizer.param_groups:
