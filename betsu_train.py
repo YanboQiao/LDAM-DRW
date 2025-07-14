@@ -73,7 +73,7 @@ def build_optimizer(model, args):
         (p for p in model.parameters() if p.requires_grad),
         lr=args.lr,
         momentum=args.momentum,
-        weight_decay=args.wd      # ← 修正字段名
+        weight_decay=args.wd
     )
 
 
