@@ -1,4 +1,4 @@
-This is XeTeX, Version 3.141592653-2.6-0.999996 (TeX Live 2024) (preloaded format=xelatex 2025.2.5)  13 JUL 2025 19:25
+This is XeTeX, Version 3.141592653-2.6-0.999996 (TeX Live 2024) (preloaded format=xelatex 2025.2.5)  14 JUL 2025 14:35
 entering extended mode
  restricted \write18 enabled.
  file:line:error style messages enabled.
@@ -761,7 +761,7 @@ Package fontspec Info: Font family 'STXihei(0)' created for font 'STXihei'
 (fontspec)             <->"STXihei/BI/OT:script=latn;language=dflt;"
 (fontspec)             - 'bold italic small caps'  (b/scit) with NFSS spec.: 
 
-No file ldam_beamer.aux.
+(./ldam_beamer.aux)
 \openout1 = `ldam_beamer.aux'.
 
 LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 13.
@@ -784,6 +784,7 @@ LaTeX Font Info:    Checking defaults for PD1/pdf/m/n on input line 13.
 LaTeX Font Info:    ... okay on input line 13.
 LaTeX Font Info:    Checking defaults for PU/pdf/m/n on input line 13.
 LaTeX Font Info:    ... okay on input line 13.
+
 *geometry* driver: auto-detecting
 *geometry* detected driver: xetex
 *geometry* verbose mode - [ preamble ] result:
@@ -819,11 +820,9 @@ LaTeX Font Info:    ... okay on input line 13.
 * (1in=72.27pt=25.4mm, 1cm=28.453pt)
 
 Package hyperref Info: Link coloring OFF on input line 13.
+(./ldam_beamer.out) (./ldam_beamer.out)
 \@outlinefile=\write5
 \openout5 = `ldam_beamer.out'.
-
-
-Package hyperref Warning: Rerun to get /PageLabels entry.
 
 LaTeX Font Info:    Overwriting symbol font `operators' in version `normal'
 (Font)                  OT1/cmr/m/n --> OT1/cmss/m/n on input line 13.
@@ -880,7 +879,7 @@ LaTeX Font Info:    Encoding `OT1' has changed to `TU' for symbol font
 (Font)              `boldpureletters' in the math version `bold' on input line 13.
 LaTeX Font Info:    Overwriting symbol font `boldpureletters' in version `bold'
 (Font)                  OT1/mathkerncmss/bx/sl --> TU/lmss/bx/it on input line 13.
-(/usr/local/texlive/2024/texmf-dist/tex/latex/translator/translator-basic-dictionary-English.dict
+ (/usr/local/texlive/2024/texmf-dist/tex/latex/translator/translator-basic-dictionary-English.dict
 Dictionary: translator-basic-dictionary, Language: English 
 ) (/usr/local/texlive/2024/texmf-dist/tex/latex/translator/translator-bibliography-dictionary-English.dict
 Dictionary: translator-bibliography-dictionary, Language: English 
@@ -952,13 +951,9 @@ LaTeX Font Info:    Overwriting math alphabet `\mathsf' in version `bold'
 (Font)                  TU/lmss/b/n --> TU/lmss/b/n on input line 13.
 LaTeX Font Info:    Overwriting math alphabet `\mathtt' in version `bold'
 (Font)                  TU/lmtt/b/n --> TU/lmtt/b/n on input line 13.
+ (./ldam_beamer.nav) [1
 
-No file ldam_beamer.nav.
-[1
-
-]
-No file ldam_beamer.toc.
-[2
+] (./ldam_beamer.toc) [2
 
 ]
 File: long-tail.png Graphic file (type bmp)
@@ -1016,8 +1011,6 @@ LaTeX Font Info:    Font shape `TU/lmss/bx/it' in size <6> not available
 
 ] [18
 
-] [19
-
 ]
 \tf@nav=\write6
 \openout6 = `ldam_beamer.nav'.
@@ -1033,23 +1026,16 @@ LaTeX Font Info:    Font shape `TU/lmss/bx/it' in size <6> not available
 LaTeX2e <2023-11-01> patch level 1
 L3 programming layer <2022/07/14>
  ***********
-
-
-Package rerunfilecheck Warning: File `ldam_beamer.out' has changed.
-(rerunfilecheck)                Rerun to get outlines right
-(rerunfilecheck)                or use package `bookmark'.
-
-Package rerunfilecheck Info: Checksums for `ldam_beamer.out':
-(rerunfilecheck)             Before: <no file>
-(rerunfilecheck)             After:  283DE44ECA372CED1F597D32F56E051B;618.
+Package rerunfilecheck Info: File `ldam_beamer.out' has not changed.
+(rerunfilecheck)             Checksum: 283DE44ECA372CED1F597D32F56E051B;618.
  ) 
 Here is how much of TeX's memory you used:
- 27214 strings out of 474773
- 610902 string characters out of 5757725
- 1939839 words of memory out of 5000000
- 48803 multiletter control sequences out of 15000+600000
+ 27252 strings out of 474773
+ 608985 string characters out of 5757725
+ 1938839 words of memory out of 5000000
+ 48831 multiletter control sequences out of 15000+600000
  567796 words of font info for 105 fonts, out of 8000000 for 9000
  1348 hyphenation exceptions out of 8191
  128i,14n,123p,443b,596s stack positions out of 10000i,1000n,20000p,200000b,200000s
 
-Output written on ldam_beamer.pdf (19 pages).
+Output written on ldam_beamer.pdf (18 pages).

@@ -201,8 +201,16 @@ def main_worker(gpu, ngpus_per_node, args):
     # ------------------------- 损失函数实例 -------------------------
 
     ldam_criterion = LDAMLoss(cls_num_list=cls_num_list, max_m=0.5, s=30).to(args.device)
-    paco_criterion = PaCoLoss(cls_num_list=cls_num_list, alpha=1.0, beta=1.0,
-                              gamma=1.0, temperature=0.2, base_temperature=0.2).to(args.device)
+    paco_criterion = PaCoLoss(
+        cls_num_list=cls_num_list,
+        alpha=1.0, beta=1.0, gamma=1.0,
+        temperature=0.2, base_temperature=0.2,
+        lambda_intra=1.0,
+        lambda_inter_mean=0.1,
+        lambda_inter_min=0.05,
+        lambda_fisher=0.1
+    ).to(args.device)
+
 
     # init log for training
     log_training = open(os.path.join(args.root_log, args.store_name, 'log_train.csv'), 'w')
@@ -234,14 +242,13 @@ def main_worker(gpu, ngpus_per_node, args):
             paco_criterion = PaCoLoss(cls_num_list, alpha=1.0, beta=1.0,
                                     gamma=1.0, temperature=0.2,
                                     base_temperature=0.2).to(args.device)
-        if epoch_idx <= 20:
-            # 1-20 → 纯 LDAM
-            criterion = ldam_criterion
-            use_paco  = False
-        elif 21 <= epoch_idx <= 160 and epoch_idx % 10 in (8, 9, 0, 1, 2):
-            # 21-160 中，每个 10 轮区间的最后3轮 (…8, …9, …0) → PaCo
+        if epoch_idx <= 100:
+            # 前 100 个 epoch → PaCo，训练分类器
             criterion = paco_criterion
             use_paco  = True
+        elif 101 <= epoch_idx <= 200:
+            criterion = ldam_criterion
+            use_paco  = False
         else:
             # 其他情况 → LDAM
             criterion = ldam_criterion
@@ -301,27 +308,43 @@ def main_worker(gpu, ngpus_per_node, args):
         # train for one epoch
         train(train_loader, model, criterion, optimizer, epoch, args, log_training, tf_writer, use_paco)
         
-        # evaluate on validation set
-        acc1 = validate(val_loader, model, ldam_criterion, epoch, args, log_testing, tf_writer)
+        # ---------- evaluate on validation set ----------
+        acc1 = validate(val_loader, model, ldam_criterion, epoch,
+                        args, log_testing, tf_writer)
 
-        # remember best acc@1 and save checkpoint
-        is_best = acc1 > best_acc1
+        # ---------- PaCo 表征阶段额外指标 ----------
+        if epoch_idx <= 100 and use_paco:
+            rep_m = rep_validate(model.module if isinstance(model, nn.DataParallel) else model,
+                                 train_loader, val_loader, args.device)
+            msg_rep = ("Rep-stage metrics | "
+                       f"intra_d: {rep_m['intra_d']:.4f}  "
+                       f"inter_min: {rep_m['inter_min']:.4f}  "
+                       f"inter_mean: {rep_m['inter_mean']:.4f}  "
+                       f"fisher: {rep_m['fisher']:.4f}")
+            print(msg_rep)
+            log_testing.write(msg_rep + '\n')
+            log_testing.flush()
+            tf_writer.add_scalars('rep_metrics', rep_m, epoch)
+
+        # ---------- best-acc 记录与保存 ----------
+        is_best   = acc1 > best_acc1
         best_acc1 = max(acc1, best_acc1)
-
         tf_writer.add_scalar('acc/test_top1_best', best_acc1, epoch)
-        output_best = 'Best Prec@1: %.3f\n' % (best_acc1)
+
         print(f"Current loss type: {'PaCo' if use_paco else 'LDAM'}")
-        print(output_best)
-        log_testing.write(output_best + '\n')
+        print(f"Best Prec@1: {best_acc1:.3f}")
+
+        log_testing.write(f"Best Prec@1: {best_acc1:.3f}\n")
         log_testing.flush()
 
         save_checkpoint(args, {
-            'epoch': epoch + 1,
-            'arch': args.arch,
+            'epoch':     epoch + 1,
+            'arch':      args.arch,
             'state_dict': model.state_dict(),
             'best_acc1': best_acc1,
-            'optimizer' : optimizer.state_dict(),
+            'optimizer': optimizer.state_dict(),
         }, is_best)
+
 
 
 def train(train_loader, model, criterion, optimizer, epoch,
@@ -462,6 +485,48 @@ def adjust_learning_rate(optimizer, epoch, args):
         lr = args.lr
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
+
+
+@torch.no_grad()
+def rep_validate(backbone, train_loader, val_loader, device):
+    backbone.eval()
+    feats, labels = [], []
+    for x, y in train_loader:
+        feats.append(backbone(x.to(device)).cpu())
+        labels.append(y.cpu())
+    feats  = torch.cat(feats, 0)
+    labels = torch.cat(labels, 0)
+    C, d   = int(labels.max()) + 1, feats.size(1)
+
+    centers = torch.zeros(C, d)
+    cnt     = torch.zeros(C)
+    centers.index_add_(0, labels, feats)
+    cnt.index_add_(0, labels, torch.ones_like(labels, dtype=torch.float))
+    centers = centers / cnt.unsqueeze(1).clamp_min(1.0)
+
+    intra_d2  = (feats - centers[labels]).pow(2).sum(1)
+    intra_d   = intra_d2.mean().item()
+
+    # --- inter-class 距离 ---
+    dist_mat = torch.cdist(centers, centers, p=2)                      # (C,C)
+    eye      = torch.eye(C, device=device, dtype=torch.bool)
+
+    # 避免 in-place：给对角线加一个大常数，创建新 tensor
+    dist_no_diag = torch.where(eye, torch.full_like(dist_mat, 1e6), dist_mat)
+
+    inter_min  = dist_no_diag.min()
+    inter_mean = dist_no_diag[~eye].mean()
+
+
+    mu_g   = feats.mean(0, keepdim=True)
+    S_W    = intra_d2.sum().item()
+    S_B    = ((centers - mu_g).pow(2).sum(1) * cnt).sum().item()
+    fisher = S_B / (S_W + 1e-12)
+
+    return dict(intra_d=intra_d,
+                inter_min=inter_min,
+                inter_mean=inter_mean,
+                fisher=fisher)
 
 if __name__ == '__main__':
     main()

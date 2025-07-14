@@ -51,21 +51,15 @@
 \end{frame}
 
 \section{LDAM 的动机与核心思想}
-\begin{frame}{动机：少数类需要更大的间隔}
+\begin{frame}{LDAM 的动机与核心思想}
     \begin{itemize}
-        \item 在不平衡数据下，少数类因样本不足更易\textbf{过拟合}，泛化误差高。我们希望对少数类进行更强的\textbf{正则化}，提高其决策边界的\textbf{安全边际}。
-        \item \textbf{分类间隔（margin）}是指模型对某类样本的决策边界裕度。理论上，分类间隔越大，泛化误差越小。
-        \item 对于\textbf{少数类}，我们希望模型在训练时取得比多数类更大的间隔，以在测试时获得更低的误差；反之，多数类可容许较小间隔而仍有足够数据支撑泛化。
-        \item 因此，\textbf{分类间隔应当依赖标签类别而异}：样本越少的类别，分类间隔应设定得越大。这是 LDAM 方法提出的核心动机。
-    \end{itemize}
-\end{frame}
-
-\begin{frame}{核心思想：标签分布感知的间隔调整}
-    \begin{itemize}
-        \item \textbf{LDAM}（Label-Distribution-Aware Margin）由 Cao 等人在 NeurIPS~2019 提出，其核心是在损失函数中引入\textbf{类别依赖的间隔偏移}。
-        \item 对每个类别 $j$ 设定一个与其训练样本数 $n_j$ 有关的间隔调整项 $\Delta_j$。少数类（$n_j$ 小）对应较大的 $\Delta_j$，多数类（$n_j$ 大）对应较小的 $\Delta_j$。
-        \item 在模型训练时，对属于类别 $j$ 的样本，其判别函数的正确类别得分需要比其它类别得分高出 $\Delta_j$，才能不被惩罚。这样确保少数类需要达到更高置信度（更大间隔）才能被正确分类。
-        \item 直观效果：这种方式在\textbf{决策边界}上给予少数类更大的“缓冲区”，降低少数类被误分类的风险，从而提升各类的\textbf{平衡准确率}。
+        \item \textbf{核心动机}: 少数类样本少，易过拟合，泛化误差高，需要更大的分类间隔（margin）提升鲁棒性。
+        \item \textbf{关键思想}: 分类间隔应依赖类别标签，样本越少的类别，间隔应越大。
+        \item \textbf{LDAM方法}: 在损失函数中引入类别相关的间隔偏移
+        \[
+            \Delta_j = C \cdot n_j^{-1/4}
+        \]
+        少数类判别要求更高置信度，提升平衡准确率。
     \end{itemize}
 \end{frame}
 
