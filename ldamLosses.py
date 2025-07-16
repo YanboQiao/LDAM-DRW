@@ -24,11 +24,22 @@ class LDAMLoss(nn.Module):
             self.class_weight = None
 
     def forward(self, logits, target):
-        margins = self.m_list[target]
-        one_hot = torch.zeros_like(logits, dtype=torch.uint8)
-        one_hot.scatter_(1, target.view(-1, 1), 1)
-        logits_adj = logits - one_hot * margins.unsqueeze(1) * self.s
+        """
+        兼容不同设备：
+          • 保证 self.m_list 与 logits / target 在同一 device
+        """
+        device  = logits.device
+        m_list  = self.m_list.to(device)          # ← 保证 buffer 在同一设备
+        margins = m_list[target]
+
+        # one-hot 与 logits 位于同一设备
+        one_hot = torch.zeros_like(logits, dtype=torch.bool, device=device)
+        one_hot.scatter_(1, target.view(-1, 1), True)
+
+        logits_adj = logits - one_hot.float() * margins.unsqueeze(1) * self.s
         weight = getattr(self, 'class_weight', None)
+        if weight is not None:
+            weight = weight.to(device)
         return F.cross_entropy(logits_adj, target, weight=weight)
 
 # ------------------------------------------------------------------ #

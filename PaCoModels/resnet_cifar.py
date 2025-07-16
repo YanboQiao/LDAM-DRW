@@ -1,26 +1,3 @@
-'''
-Properly implemented ResNet for CIFAR10 as described in paper [1].
-The implementation and structure of this file is hugely influenced by [2]
-which is implemented for ImageNet and doesn't have option A for identity.
-Moreover, most of the implementations on the web is copy-paste from
-torchvision's resnet and has wrong number of params.
-Proper ResNet-s for CIFAR10 (for fair comparision and etc.) has following
-number of layers and parameters:
-name      | layers | params
-ResNet20  |    20  | 0.27M
-ResNet32  |    32  | 0.46M
-ResNet44  |    44  | 0.66M
-ResNet56  |    56  | 0.85M
-ResNet110 |   110  |  1.7M
-ResNet1202|  1202  | 19.4m
-which this implementation indeed has.
-Reference:
-[1] Kaiming He, Xiangyu Zhang, Shaoqing Ren, Jian Sun
-    Deep Residual Learning for Image Recognition. arXiv:1512.03385
-[2] https://github.com/pytorch/vision/blob/master/torchvision/models/resnet.py
-If you use this implementation in you work, please don't forget to mention the
-author, Yerlan Idelbayev.
-'''
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -29,10 +6,12 @@ from torch.nn import Parameter
 
 __all__ = ['ResNet_s', 'resnet20', 'resnet32', 'resnet44', 'resnet56', 'resnet110', 'resnet1202']
 
+
 def _weights_init(m):
     classname = m.__class__.__name__
     if isinstance(m, nn.Linear) or isinstance(m, nn.Conv2d):
         init.kaiming_normal_(m.weight)
+
 
 class NormedLinear(nn.Module):
 
@@ -44,6 +23,7 @@ class NormedLinear(nn.Module):
     def forward(self, x):
         out = F.normalize(x, dim=1).mm(F.normalize(self.weight, dim=0))
         return out
+
 
 class LambdaLayer(nn.Module):
 
@@ -88,45 +68,55 @@ class BasicBlock(nn.Module):
 
 
 class ResNet_s(nn.Module):
-    def __init__(self, block, num_blocks, num_classes=10, use_norm=False):
-        super().__init__()
-        self.in_planes = 16
-        self.conv1 = nn.Conv2d(3, 16, 3, 1, 1, bias=False)
-        self.bn1 = nn.BatchNorm2d(16)
-        self.layer1 = self._make_layer(block, 16, num_blocks[0], 1)
-        self.layer2 = self._make_layer(block, 32, num_blocks[1], 2)
-        self.layer3 = self._make_layer(block, 64, num_blocks[2], 2)
-        self.use_norm = use_norm
-        self.linear = NormedLinear(64, num_classes) if use_norm else nn.Linear(64, num_classes)
+
+    def __init__(self, block, num_blocks, num_classes=10, use_norm=False, return_features=False):
+        super(ResNet_s, self).__init__()
+        factor = 1 
+        self.in_planes = 16 * factor
+
+        self.conv1 = nn.Conv2d(3, 16 * factor, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(16 * factor)
+        self.layer1 = self._make_layer(block, 16 * factor, num_blocks[0], stride=1)
+        self.layer2 = self._make_layer(block, 32 * factor, num_blocks[1], stride=2)
+        self.layer3 = self._make_layer(block, 64 * factor, num_blocks[2], stride=2)
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        if use_norm:
+            self.fc = NormedLinear(64 * factor, num_classes)
+        else:
+            self.fc = nn.Linear(64 * factor, num_classes)
         self.apply(_weights_init)
+        self.return_encoding = return_features
+        
 
     def _make_layer(self, block, planes, num_blocks, stride):
         strides = [stride] + [1]*(num_blocks-1)
         layers = []
-        for s in strides:
-            layers.append(block(self.in_planes, planes, s))
+        for stride in strides:
+            layers.append(block(self.in_planes, planes, stride))
             self.in_planes = planes * block.expansion
+
         return nn.Sequential(*layers)
 
-    # 新增 return_feat 参数
-    def forward(self, x, return_feat=False):
+    def forward(self, x):
         out = F.relu(self.bn1(self.conv1(x)))
         out = self.layer1(out)
         out = self.layer2(out)
         out = self.layer3(out)
-        out = F.avg_pool2d(out, out.size(3))
-        feat = out.view(out.size(0), -1)
-        logits = self.linear(feat)
-        if return_feat:
-            return logits, feat
-        return logits
+        out = self.avgpool(out)
+        encoding = out.view(out.size(0), -1)
+        out = self.fc(encoding)
+        if self.return_encoding:
+            return out, encoding
+        else:
+            return out
+
 
 def resnet20():
     return ResNet_s(BasicBlock, [3, 3, 3])
 
 
-def resnet32(num_classes=10, use_norm=False):
-    return ResNet_s(BasicBlock, [5, 5, 5], num_classes=num_classes, use_norm=use_norm)
+def resnet32(num_classes=100, use_norm=False, return_features=False):
+    return ResNet_s(BasicBlock, [5, 5, 5], num_classes=num_classes, use_norm=use_norm, return_features=return_features)
 
 
 def resnet44():
@@ -152,7 +142,7 @@ def test(net):
     for x in filter(lambda p: p.requires_grad, net.parameters()):
         total_params += np.prod(x.data.numpy().shape)
     print("Total number of params", total_params)
-    print("Total layers", len(list(filter(lambda p: p.requires_grad and len(p.data.size())>1, net.parameters()))))
+    print("Total layers", len(list(filter(lambda p: p.requires_grad and len(p.data.size()) > 1, net.parameters()))))
 
 
 if __name__ == "__main__":
