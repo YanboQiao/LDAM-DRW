@@ -12,19 +12,19 @@ import torch.backends.cudnn as cudnn
 import torch.optim
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
-import models
+import ldamModels
 from tensorboardX import SummaryWriter
 from sklearn.metrics import confusion_matrix
-from utils import *
+from pacoUtils import *
 from imbalance_cifar import IMBALANCECIFAR10, IMBALANCECIFAR100
 from losses import LDAMLoss, PaCoLoss
 from balanced_augmentation import BalancedAugmentedCIFAR
 
 # -------------------- CLI -------------------- #
 model_names = sorted(
-    name for name in models.__dict__
+    name for name in ldamModels.__dict__
     if name.islower() and not name.startswith("__")
-    and callable(models.__dict__[name])
+    and callable(ldamModels.__dict__[name])
 )
 parser = argparse.ArgumentParser(description='PaCo‑LDAM two‑stage training')
 parser.add_argument('--dataset', default='cifar100')
@@ -195,7 +195,7 @@ def main_worker(args):
     global best_acc1
     print(f"=> creating model '{args.arch}'")
     num_classes = 100 if args.dataset == 'cifar100' else 10
-    model = models.__dict__[args.arch](num_classes=num_classes, use_norm=True)
+    model = ldamModels.__dict__[args.arch](num_classes=num_classes, use_norm=True)
 
     if args.device.type == 'cuda':
         if args.gpu is None:

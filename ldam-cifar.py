@@ -14,17 +14,17 @@ import torch.multiprocessing as mp
 import torch.utils.data
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
-import models
+import ldamModels
 from tensorboardX import SummaryWriter
 from sklearn.metrics import confusion_matrix
-from utils import *
+from ldamUtils import *
 from imbalance_cifar import IMBALANCECIFAR10, IMBALANCECIFAR100
-from losses import LDAMLoss, PaCoLoss, FocalLoss
+from ldamLosses import LDAMLoss, PaCoLoss, FocalLoss
 from balanced_augmentation import BalancedAugmentedCIFAR
 
-model_names = sorted(name for name in models.__dict__
+model_names = sorted(name for name in ldamModels.__dict__
     if name.islower() and not name.startswith("__")
-    and callable(models.__dict__[name]))
+    and callable(ldamModels.__dict__[name]))
 
 parser = argparse.ArgumentParser(description='PyTorch Cifar Training')
 parser.add_argument('--dataset', default='cifar100', help='dataset setting')
@@ -117,7 +117,7 @@ def main_worker(gpu, ngpus_per_node, args):
     print(f"=> creating model '{args.arch}'")
     num_classes = 100 if args.dataset == 'cifar100' else 10
     use_norm = True if args.loss_type == 'LDAM' else False
-    model = models.__dict__[args.arch](num_classes=num_classes, use_norm=use_norm)
+    model = ldamModels.__dict__[args.arch](num_classes=num_classes, use_norm=use_norm)
 
     # 只在cuda设备时调用cuda相关操作
     if args.device.type == 'cuda':

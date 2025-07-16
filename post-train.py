@@ -16,8 +16,8 @@ import torchvision.datasets as datasets
 from tensorboardX import SummaryWriter
 from sklearn.metrics import confusion_matrix
 
-import models
-from utils import *
+import ldamModels
+from pacoUtils import *
 
 def eval_and_pick_worst(val_loader, model, criterion) -> List[int]:
     """评估一次，返回分类准确率最低的 20% 类别 id 列表"""
