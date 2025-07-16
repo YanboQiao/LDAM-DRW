@@ -1,4 +1,4 @@
-This is XeTeX, Version 3.141592653-2.6-0.999996 (TeX Live 2024) (preloaded format=xelatex 2025.2.5)  14 JUL 2025 14:35
+This is XeTeX, Version 3.141592653-2.6-0.999996 (TeX Live 2024) (preloaded format=xelatex 2025.2.5)  15 JUL 2025 19:37
 entering extended mode
  restricted \write18 enabled.
  file:line:error style messages enabled.
@@ -961,26 +961,26 @@ File: long-tail.png Graphic file (type bmp)
  [3
 
 ]
-LaTeX Font Info:    Trying to load font information for U+msa on input line 42.
+LaTeX Font Info:    Trying to load font information for U+msa on input line 43.
  (/usr/local/texlive/2024/texmf-dist/tex/latex/amsfonts/umsa.fd
 File: umsa.fd 2013/01/14 v3.01 AMS symbols A
 )
-LaTeX Font Info:    Trying to load font information for U+msb on input line 42.
+LaTeX Font Info:    Trying to load font information for U+msb on input line 43.
  (/usr/local/texlive/2024/texmf-dist/tex/latex/amsfonts/umsb.fd
 File: umsb.fd 2013/01/14 v3.01 AMS symbols B
 )
 LaTeX Font Info:    Font shape `TU/lmss/m/it' in size <10.95> not available
-(Font)              Font shape `TU/lmss/m/sl' tried instead on input line 42.
+(Font)              Font shape `TU/lmss/m/sl' tried instead on input line 43.
 LaTeX Font Info:    Font shape `TU/lmss/m/it' in size <8> not available
-(Font)              Font shape `TU/lmss/m/sl' tried instead on input line 42.
+(Font)              Font shape `TU/lmss/m/sl' tried instead on input line 43.
 LaTeX Font Info:    Font shape `TU/lmss/m/it' in size <6> not available
-(Font)              Font shape `TU/lmss/m/sl' tried instead on input line 42.
+(Font)              Font shape `TU/lmss/m/sl' tried instead on input line 43.
 LaTeX Font Info:    Font shape `TU/lmss/bx/it' in size <10.95> not available
-(Font)              Font shape `TU/lmss/bx/sl' tried instead on input line 42.
+(Font)              Font shape `TU/lmss/bx/sl' tried instead on input line 43.
 LaTeX Font Info:    Font shape `TU/lmss/bx/it' in size <8> not available
-(Font)              Font shape `TU/lmss/bx/sl' tried instead on input line 42.
+(Font)              Font shape `TU/lmss/bx/sl' tried instead on input line 43.
 LaTeX Font Info:    Font shape `TU/lmss/bx/it' in size <6> not available
-(Font)              Font shape `TU/lmss/bx/sl' tried instead on input line 42.
+(Font)              Font shape `TU/lmss/bx/sl' tried instead on input line 43.
  [4
 
 ] [5
@@ -991,17 +991,36 @@ LaTeX Font Info:    Font shape `TU/lmss/bx/it' in size <6> not available
 
 ] [8
 
-] [9
+]
+LaTeX Font Info:    Trying to load font information for U+euf on input line 125.
+ (/usr/local/texlive/2024/texmf-dist/tex/latex/amsfonts/ueuf.fd
+File: ueuf.fd 2013/01/14 v3.01 Euler Fraktur
+) [9
 
-] [10
+]
+
+LaTeX Warning: Reference `thm:class' on page 10 undefined on input line 143.
+
+[10
 
 ] [11
 
 ] [12
 
-] [13
+]
+\openout4 = `ldam_beamer.vrb'.
 
-] [14
+ (./ldam_beamer.vrb
+
+LaTeX Font Warning: Font shape `TU/STXihei(0)/m/it' undefined
+(Font)              using `TU/STXihei(0)/m/n' instead on input line 3.
+
+) [13
+
+]
+\openout4 = `ldam_beamer.vrb'.
+
+ (./ldam_beamer.vrb) [14
 
 ] [15
 
@@ -1026,15 +1045,22 @@ LaTeX Font Info:    Font shape `TU/lmss/bx/it' in size <6> not available
 LaTeX2e <2023-11-01> patch level 1
 L3 programming layer <2022/07/14>
  ***********
+
+
+LaTeX Font Warning: Some font shapes were not available, defaults substituted.
+
+
+LaTeX Warning: There were undefined references.
+
 Package rerunfilecheck Info: File `ldam_beamer.out' has not changed.
-(rerunfilecheck)             Checksum: 283DE44ECA372CED1F597D32F56E051B;618.
+(rerunfilecheck)             Checksum: C58E5034920CD8C97B65462DB1D67FA0;531.
  ) 
 Here is how much of TeX's memory you used:
- 27252 strings out of 474773
- 608985 string characters out of 5757725
+ 27338 strings out of 474773
+ 611092 string characters out of 5757725
  1938839 words of memory out of 5000000
- 48831 multiletter control sequences out of 15000+600000
- 567796 words of font info for 105 fonts, out of 8000000 for 9000
+ 48904 multiletter control sequences out of 15000+600000
+ 568528 words of font info for 111 fonts, out of 8000000 for 9000
  1348 hyphenation exceptions out of 8191
  128i,14n,123p,443b,596s stack positions out of 10000i,1000n,20000p,200000b,200000s
 
