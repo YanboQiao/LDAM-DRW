@@ -1,0 +1,16 @@
+\frametitle{多分类最优间隔定理——证明}
+\begin{proof}
+同样以拉格朗日乘子法处理
+\[
+\mathcal{L}
+= \sum_{j=1}^k \frac{1}{\gamma_j\sqrt{n_j}}
++ \lambda\Bigl(\sum_{j=1}^k\gamma_j - M\Bigr).
+\]
+对每个 $\gamma_j$ 求偏导：
+\[
+-\frac{1}{\gamma_j^{2}\sqrt{n_j}} + \lambda = 0
+\;\Longrightarrow\;
+\gamma_j^2\sqrt{n_j} = \frac{1}{\lambda} = \text{const}.
+\]
+由此得 $\gamma_j\propto n_j^{-1/4}$。
+\end{proof}

@@ -35,6 +35,7 @@
 \end{frame}
 \begin{frame}{长尾分布的训练难题}
     \begin{itemize}
+        \item \textbf{长尾分布的意义}：长尾分布广泛存在于许多实际应用中，如医学的疾病影像分类中罕见病往往面临样本不足的问题，但是模型仍然需要对所有类别进行有效学习。
         \item \textbf{头部挤占空间和边界}：在长尾分布下，头部类别（样本多）在特征空间中占据主导地位，导致尾部类别（样本少）可用的判别空间被严重压缩，决策边界容易偏向头部类。
         \item \textbf{尾部样本少，难以支撑空间和间隔}：尾部类别由于样本极少，模型难以学习到稳定且具有代表性的特征，导致其决策边界不明确，分类间隔（margin）很小，泛化能力差，易被头部类误分类。
         \item 这两大难题共同导致尾部类别的准确率显著低于头部类别，是长尾分布下模型训练的核心挑战。
@@ -63,21 +64,6 @@
     \end{itemize}
 \end{frame}
 
-\section{LDAM 损失函数形式}
-\begin{frame}{LDAM 损失函数（Hinge 形式）}
-    考虑模型对样本 $(x,y)$ 输出各类别的实数分数（logits）$z_1, z_2, \dots, z_k$。为简化记号，记 $z_j = f(x)_j$。
-    \begin{itemize}
-        \item \textbf{间隔损失（多分类 Hinge 扩展）}: 
-        \[
-            L_{\text{LDAM-HG}}(x,y) = \max\{\max_{j \neq y}(z_j) - z_y + \Delta_y,\;0\}\,,
-        \] 
-        其中 $\Delta_y$ 为类别 $y$ 的间隔偏移量（下同）。
-        \item 含义：要求正确类得分 $z_y$ 比任何错误类得分至少高出 $\Delta_y$。若差值小于 $\Delta_y$ 则产生损失，促使模型拉大该差距。
-        \item 间隔偏移设定为 $\displaystyle \Delta_j = C \cdot n_j^{-1/4}$，其中 $C$ 为超参数。少数类因 $n_j$ 小而 $\Delta_j$ 大，需要更大间隔方可零损失。
-        \item Hinge 损失不连续，直接优化可能有困难。
-    \end{itemize}
-\end{frame}
-
 \begin{frame}{LDAM 损失函数（交叉熵形式）}
     \begin{itemize}
         \item \textbf{平滑的交叉熵损失}: 为了优化的稳定性，LDAM 实际采用交叉熵形式加入间隔：
@@ -87,126 +73,188 @@
         其中同样 $\Delta_y = C \cdot n_y^{-1/4}$。
         \item 对正确类别的 logit 减去 $\Delta_y$，相当于提高该样本被正确分类的难度（需要更大的 logit 才有相同概率），从而有效地在概率空间实现了类依赖的间隔。
         \item 当训练集平衡时，可以视 $\Delta_y$ 取常数 $C$（不区分类别）即退化为一般的具有固定 margin 的损失【与以往工作中恒定 margin 的情况对应】。LDAM 则针对不平衡数据，动态调整 margin 大小。
-        \item 总体而言，LDAM 通过简单修改损失函数，结合后续的训练策略（如延迟重加权），取得了优于单纯重采样/重加权的方法的效果。
+        \item LDAM 通过简单修改损失函数，结合后续的训练策略（如延迟重加权），取得了优于单纯重采样/重加权的方法的效果。
     \end{itemize}
 \end{frame}
 
-\section{定理一推导}
+% =====================  Section: 定理推导和证明  =====================
+\section{定理推导和证明}
+
+%--------------------------------
 \begin{frame}{平衡误差与分类间隔}
     \begin{itemize}
-        \item 考虑\textbf{平衡测试误差}：各类测试样本数均等时，模型的总体误分类率记为 $L_{\text{bal}}$。若 $L_j$ 表示类别 $j$ 上的误差率（即真实标签为 $j$ 时的错误率），则 
-        \[
-            L_{\text{bal}} = \frac{1}{k}\sum_{j=1}^k L_j\,,
-        \] 
-        即各类误差的平均。
-        \item \textbf{分类间隔（margin）}: 对于类别 $j$，可以定义模型的\textbf{训练间隔} $\gamma_j$ 为该类训练样本距决策边界的最小距离（几何间隔），或等价地在多分类情形下定义为 $\gamma_j = \min_{x_i:y_i=j}\big(f(x_i)_y - \max_{l \neq y}f(x_i)_l\big)$。$\gamma_j$ 越大表示类别 $j$ 的训练样本与其他类别分得越开。
-        \item 理论上，较大的 $\gamma_j$ 有助于降低类别 $j$ 的泛化误差。我们将利用\textbf{基于间隔的泛化界}来分析不平衡数据下的误差。
+        \item \textbf{平衡测试误差}  
+              \[
+                  L_{\text{bal}}\;=\;\frac{1}{k}\sum_{j=1}^{k} L_j,
+                  \quad
+                  L_j:=\Pr\!\bigl[\hat y\neq y\mid y=j\bigr].
+              \]
+        \item \textbf{训练硬间隔}（多分类）  
+              \[
+                  \gamma_j
+                  \;=\;
+                  \min_{x_i:y_i=j}\!\Bigl[
+                     f_{y_i}(x_i)-\max_{l\neq y_i}f_l(x_i)
+                  \Bigr].
+              \]
+        \item 理论上 $\gamma_j\!\uparrow\;\Rightarrow\;L_j\!\downarrow$  
+              —— 详见后续类别级泛化界。
     \end{itemize}
 \end{frame}
 
-\begin{frame}{整体间隔界（标签无关）}
-    在传统均衡情形，有如下经典结果：若模型对所有训练样本都实现了至少 $\gamma$ 的间隔，则测试误差有上界（以高概率）：
+%--------------------------------
+\begin{frame}{整体硬间隔泛化界（均衡设定回顾）}
+    若模型在全部 $n$ 个样本上实现统一硬间隔 $\gamma$ 且 $\widehat L_{\gamma}=0$，则
     \[
-        L_{\text{test}} \lesssim \frac{C(F)}{\gamma^2\,n}\,,
-    \] 
-    其中 $n$ 是训练集大小，$C(F)$ 表示模型空间的复杂度常数（如VC维或 Rademacher 复杂度相关因子）。该上界展示了错误率随样本数增加而降低，并随间隔增大而降低。
-    \begin{itemize}
-        \item 然而，上式中的 $\gamma$ 取决于所有样本中的最小间隔，即主要由数据最密集的多数类限制，\textbf{没有反映类别不平衡}。
-        \item 为了针对不平衡情况进行更精细的分析，我们需要考察每一类别各自的间隔和规模对误差的影响。
-    \end{itemize}
-\end{frame}
-
-\begin{frame}{按类别的间隔泛化界}
-    \textbf{定理1（简化表述）}: 假设模型对每个类别 $j$ 的训练样本均实现了至少 $\gamma_j$ 的间隔，则以高概率，有：
-    \[
-        L_j \;\lesssim\; \frac{1}{\gamma_j}\sqrt{\frac{C(F)}{\,n_j\,}} \;+\; \frac{\log n}{\sqrt{\,n_j\,}}\,,
-    \] 
-    其中 $n_j$ 是类别 $j$ 的训练样本数，$C(F)$为假设类的复杂度常数。符号 $\lesssim$ 表示忽略了与 $\delta$ 概率有关的次要常数项。
-    \begin{itemize}
-        \item 直观理解：类别 $j$ 的\textbf{泛化误差}上界随 $n_j$ 增大而降低，并随 $\gamma_j$ 增大而降低。第二项 $\frac{\log n}{\sqrt{n_j}}$ 相对第一项为低阶项（当 $n_j$ 较大时）。
-        \item 因此对于样本较少（$n_j$ 小）的类别，要保证同等的误差上限，需要更大的 $\gamma_j$ 才行。这正定量地说明了为什么少数类需要更大的间隔来提升泛化性能。
-    \end{itemize}
-\end{frame}
-
-\begin{frame}{平衡误差的上界}
-    根据上述每类误差界，将 $k$ 个类别的误差上界取平均，可得模型的平衡总体误差界：
-    \[
-        L_{\text{bal}} \;=\; \frac{1}{k}\sum_{j=1}^k L_j \;\lesssim\; \frac{1}{k}\sum_{j=1}^k\!\Big( \frac{1}{\gamma_j}\sqrt{\frac{C(F)}{\,n_j\,}} + \frac{\log n}{\sqrt{\,n_j\,}}\Big)\,.
+        L_{\text{test}}
+        \;\le\;
+        \frac{2}{\gamma}\,\mathfrak{R}_{n}(\mathcal{F})
+        +\sqrt{\frac{\ln(2/\delta)}{2n}}
+        \;\lesssim\;
+        \frac{C(\mathcal F)}{\gamma\sqrt n},
+        \quad
+        \text{(概率} \;1-\delta\text{)}.
     \]
-    忽略 $\log n$ 的影响并合并常数，可近似表示主要的支配项为：
+    该结果来自 Rademacher 复杂度泛化界，说明
+    \(
+        L_{\text{test}}
+        =O\!\bigl(\gamma^{-1}n^{-1/2}\bigr).
+    \)
+    \vskip2mm
+    \textbf{局限：} 最小 $\gamma$ 往往由多数类决定，无法刻画类别不平衡。
+\end{frame}
+
+%--------------------------------
+\begin{frame}{类别级硬间隔泛化界（定理 \ref{thm:class}）}
+    对于类别 $j$，若 $\widehat L_{\gamma_j,j}=0$，则以概率 $1-\delta$：
     \[
-        L_{\text{bal}} \approx \frac{C'}{k} \sum_{j=1}^k \frac{1}{\gamma_j\,\sqrt{n_j}}\,,
-    \] 
-    其中 $C'$ 吸收了 $C(F)$ 等常数因子。
+        L_j
+        \;\le\;
+        \frac{2}{\gamma_j}\,\mathfrak{R}_{n_j}(\mathcal F)
+        +\sqrt{\frac{\ln(2/\delta)}{2n_j}}
+        \;\lesssim\;
+        \frac{C_1}{\gamma_j}\sqrt{\frac{C(\mathcal F)}{n_j}}
+        +\frac{1}{\sqrt{n_j}}.
+    \]
     \begin{itemize}
-        \item 该结果揭示：\textbf{平衡误差主要由各类项 $1/(\gamma_j\sqrt{n_j})$ 决定}。减少少数类误差需要增大相应的 $\gamma_j$ 来补偿 $n_j$ 小的劣势。
-        \item 但注意，$\{\gamma_j\}$ 之间并非独立——模型不能同时任意增大所有类别的间隔，总有一个\textbf{间隔分配}的权衡问题。
+        \item 首项支配：$\displaystyle L_j=O\!\bigl(\gamma_j^{-1}n_j^{-1/2}\bigr)$。
+        \item $n_j$ 小的类别需更大 $\gamma_j$ 才能保持同等误差。
     \end{itemize}
 \end{frame}
 
-\begin{frame}{二分类情况下的间隔权衡}
-    % 此处建议插入图：二分类决策边界间隔权衡示意图
+%--------------------------------
+\begin{frame}{平衡误差上界}
+    平均各类界得
+    \[
+        L_{\text{bal}}
+        \;\le\;
+        \frac{C_1}{k}\sum_{j=1}^{k}
+        \frac{1}{\gamma_j}\sqrt{\frac{C(\mathcal F)}{n_j}}
+        +\frac{1}{k}\sum_{j=1}^{k}\!\frac{1}{\sqrt{n_j}}
+        \;\approx\;
+        \color{blue}{\frac{C'}{k}\sum_{j=1}^{k}\frac{1}{\gamma_j\sqrt{n_j}}}.
+    \]
+    \textbf{结论：} 最主要的误差来源是  
+    \(
+       \displaystyle\sum_{j} 1/\!\bigl(\gamma_j\sqrt{n_j}\bigr).
+    \)
+\end{frame}
+
+%--------------------------------
+\begin{frame}{二分类最优间隔分配}
+    \[
+        \min_{\gamma_1,\gamma_2>0}
+        \frac{1}{\gamma_1\sqrt{n_1}}
+        +\frac{1}{\gamma_2\sqrt{n_2}}
+        \quad
+        \text{s.t.}\;
+        \gamma_1+\gamma_2=\beta.
+    \]
+    \begin{enumerate}
+        \item 拉格朗日函数  
+              $\displaystyle 
+              \mathcal{L}=\frac{1}{\gamma_1\sqrt{n_1}}
+              +\frac{1}{\gamma_2\sqrt{n_2}}
+              +\lambda(\gamma_1+\gamma_2-\beta)$。
+        \item 导数置零  
+              $\partial_{\gamma_j}\mathcal L=0
+              \;\Rightarrow\;
+              \gamma_j^2\sqrt{n_j}=1/\lambda$。
+        \item 比值关系  
+              $\displaystyle
+              \frac{\gamma_1}{\gamma_2}=\bigl(n_2/n_1\bigr)^{1/4}$。
+    \end{enumerate}
+    \[
+        \therefore\quad
+        \boxed{\gamma_j\propto n_j^{-1/4}}\quad(j=1,2).
+    \]
+\end{frame}
+
+%--------------------------------
+%----------- Page 1 -----------
+\begin{frame}[fragile]{多分类最优间隔定理}
+\begin{theorem}[多分类最优间隔]
+在 $k$ 分类问题中，若假设间隔预算约束
+\(\sum_{j=1}^k \gamma_j = M\)，则最小化
+\(\sum_{j=1}^k \frac{1}{\gamma_j\sqrt{n_j}}\)
+的最优解满足
+\[
+\gamma_j \;\propto\; n_j^{-1/4},
+\quad j=1,\dots,k.
+\]
+\end{theorem}
+\end{frame}
+
+%----------- Page 2 -----------
+\begin{frame}[fragile]{多分类最优间隔定理——证明}
+\begin{proof}
+同样以拉格朗日乘子法处理
+\[
+\mathcal{L}
+= \sum_{j=1}^k \frac{1}{\gamma_j\sqrt{n_j}}
++ \lambda\Bigl(\sum_{j=1}^k\gamma_j - M\Bigr).
+\]
+对每个 $\gamma_j$ 求偏导：
+\[
+-\frac{1}{\gamma_j^{2}\sqrt{n_j}} + \lambda = 0
+\;\Longrightarrow\;
+\gamma_j^2\sqrt{n_j} = \frac{1}{\lambda} = \text{const}.
+\]
+由此得 $\gamma_j\propto n_j^{-1/4}$。
+\end{proof}
+\end{frame}
+
+
+%--------------------------------
+\begin{frame}{LDAM 损失的理论支撑}
     \begin{itemize}
-        \item 平衡误差界近似为 $ \frac{1}{\gamma_1\sqrt{n_1}} + \frac{1}{\gamma_2\sqrt{n_2}} $（忽略常数）。
-        \item 在线性可分情况下，\textbf{决策边界的位置移动可以改变两类的间隔}：通常当固定边界方向时，$\gamma_1$ 与 $\gamma_2$ 之和近似为常数。如图所示，通过平移决策边界可以增加一类间隔同时减少另一类间隔。
-        \item 设约束 $\gamma_1 + \gamma_2 = M$（常数）。为最小化 $1/(\gamma_1\sqrt{n_1}) + 1/(\gamma_2\sqrt{n_2})$，可引入拉格朗日乘子或求导分析：最优解需满足
-        \[
-            \frac{1}{\gamma_1^2\sqrt{n_1}} = \frac{1}{\gamma_2^2\sqrt{n_2}}\,,
-        \] 
-        即 $\gamma_1^2 \sqrt{n_1} = \gamma_2^2 \sqrt{n_2}$。
-        \item 解得\; $\displaystyle \frac{\gamma_1}{\gamma_2} = \Big(\frac{n_2}{\,n_1}\Big)^{1/4}$，因而存在常数 $C$ 使 $\gamma_1 = \frac{C}{n_1^{1/4}},\;\gamma_2 = \frac{C}{n_2^{1/4}}$。
-        \item 结论：\textbf{两类样本最优的间隔大小与各自样本数的四次根成反比}（样本越少，间隔应越大）。
+        \item LDAM 设置类别偏移  
+              $\displaystyle \Delta_j=C\cdot n_j^{-1/4}$，
+              与最优间隔 $\gamma_j\!\propto\! n_j^{-1/4}$ 完全一致。
+        \item 在 \emph{慢速率}（$L_j\sim n_j^{-1/2}$）下指数为 $-1/4$。  
+              若达到 \emph{快速率}（$L_j\sim n_j^{-1}$）则推导得 $-1/3$，  
+              但经验上 $-1/4$ 更稳健。
+        \item 因此 LDAM 近似最优地平衡了不平衡数据集的各类泛化误差。
+    \end{itemize}
+\end{frame}
+%=====================================================================
+
+\section{个人工作和改进}
+
+\begin{frame}{尝试过的改进和效果}
+    在本篇论文的基础上，我尝试了下面的改进和变体：
+    \begin{itemize}
+        \item \textbf{模型的融合}: 尝试在训练的最后阶段保存多个checkpoint，最后检测互补的匹配程度，进行模型融合。结果发现融合后的模型在少数类上有一定提升，但整体效果有限。将模型准确度从41.7\%提升至了42.1\%。
+        \item \textbf{后训练微调}: 在训练结束后，使用少数类样本进行微调（效果最差的20个类使用40\%的训练样本）。将模型准确率提升至43.84\%。
+        \item \textbf{尝试引用其他的损失函数}: 通过调研和搜索，我发现了长尾学习领域在表征层的表征能力和分类层的训练上有不同的见解，注意到PaCo（2021）这篇论文提出的\textbf{对比学习}方法，将模型准确率提升到了要求的50\%以上。
     \end{itemize}
 \end{frame}
 
-\section{多分类推广}
-\begin{frame}{最优间隔分配的推广}
-    多分类问题中，我们希望类间的间隔分配同样遵循类似规律。考虑一般的 $k$ 类情形：
+\begin{frame}{LDAM和PaCo的融合改进策略}
     \begin{itemize}
-        \item 平衡误差界的主导项：$\sum_{j=1}^k \frac{1}{\gamma_j\sqrt{n_j}}$。我们希望选择合适的 $\gamma_j$ 分配以尽量减小该值。
-        \item 模型对不同类别能实现的间隔存在\textbf{总体限制}。为刻画这种约束，可假设间隔之和有上限：$\sum_{j=1}^k \gamma_j = M$（$M$ 反映模型容量和决策边界整体尺度）。
-        \item 我们利用\textbf{拉格朗日乘子法}求解极值，以获得 $\gamma_j$ 相对于 $n_j$ 的关系。
-    \end{itemize}
-\end{frame}
-
-\begin{frame}{拉格朗日法求解（1）}
-    将目标函数定义为：
-    \[
-        \mathcal{L}(\{\gamma_j\}, \lambda) = \sum_{j=1}^k \frac{1}{\gamma_j\sqrt{n_j}}\;+\; \lambda\Big(\sum_{j=1}^k \gamma_j - M\Big)\,.
-    \]
-    对任意类别 $i$，对 $\gamma_i$ 求偏导并设为 0，可得：
-    \[
-        \frac{\partial \mathcal{L}}{\partial \gamma_i} = -\frac{1}{\gamma_i^2 \sqrt{n_i}} + \lambda = 0\,,
-    \] 
-    从而得到关于 $\lambda$ 的关系：
-    \[
-        \lambda = \frac{1}{\gamma_i^2\sqrt{n_i}}\qquad (\forall\,i=1,\dots,k)\,.
-    \]
-    这意味着在最优点处，对于所有类别 $i$，都有 $1/(\gamma_i^2\sqrt{n_i})$ 相等，均等于拉格朗日乘子 $\lambda$。
-\end{frame}
-
-\begin{frame}{拉格朗日法求解（2）}
-    由 $\displaystyle \frac{1}{\gamma_i^2\sqrt{n_i}} = \frac{1}{\gamma_j^2\sqrt{n_j}}$ 可推得：
-    \[
-        \gamma_i^2 \sqrt{n_i} = \gamma_j^2 \sqrt{n_j} \qquad (\forall\, i,j)\,.
-    \]
-    也即对于任意两类 $i$ 与 $j$：
-    \[
-        \Big(\frac{\gamma_i}{\gamma_j}\Big)^2 = \sqrt{\frac{n_j}{\,n_i}}\,, \qquad \text{因此}\quad \frac{\gamma_i}{\gamma_j} = \Big(\frac{n_j}{\,n_i}\Big)^{1/4}\,.
-    \]
-    这说明存在某常数 $C$，使得对每个类别 $j$ 都有：
-    \[
-        \gamma_j = \frac{C}{n_j^{1/4}}\,,
-    \] 
-    即最优间隔与该类训练样本数的$-1/4$次幂成正比。这与二分类推导结果一致。
-\end{frame}
-
-\begin{frame}{LDAM 方法的理论依据}
-    综合以上分析，我们得到指导 LDAM 设计的关键结论：
-    \begin{itemize}
-        \item 对于类别 $j$，应设置决策间隔偏移 $\Delta_j \propto n_j^{-1/4}$。LDAM 损失正是依据该原则选取 $\Delta_j = C \cdot n_j^{-1/4}$（$C$ 为调节常数）。
-        \item 这种设定在不平衡数据下接近最优地平衡了各类别的\textbf{泛化误差}：少数类获得更大的间隔（更严格的决策要求），多数类则稍放宽，以整体降低平衡误差上界。
-        \item 注：上述理论是在\textbf{“慢速率”}泛化界（误差 $\sim 1/\sqrt{n}$）下得到指数 $-1/4$。有研究表明在过参数模型下可能达到\textbf{“快速率”}（误差 $\sim 1/n$），此时类似推导会得到指数 $-1/3$【只是理论可能，实际设置仍采用 $-1/4$】。
+        \item \textbf{LDAM与PaCo的结合}: 在LDAM的基础上，结合PaCo的对比学习思想，设计了一个新的损失函数。该函数在分类层引入了对比损失，使得同类样本之间的距离更近，不同类样本之间的距离更远。
+        \item \textbf{实验结果}: 经过实验验证，这种结合方法在少数类样本上表现出更好的鲁棒性和泛化能力。模型准确率提升至了55\%。
+        \item \textbf{未来工作}: 计划进一步优化对比损失的设计，并探索更多类别不平衡问题的解决方案。
     \end{itemize}
 \end{frame}
 

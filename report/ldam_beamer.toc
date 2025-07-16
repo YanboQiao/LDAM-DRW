@@ -1,6 +1,5 @@
 \beamer@sectionintoc {1}{数据不平衡学习背景}{3}{0}{1}
 \beamer@sectionintoc {2}{LDAM 的动机与核心思想}{6}{0}{2}
-\beamer@sectionintoc {3}{LDAM 损失函数形式}{7}{0}{3}
-\beamer@sectionintoc {4}{定理一推导}{9}{0}{4}
-\beamer@sectionintoc {5}{多分类推广}{14}{0}{5}
-\beamer@sectionintoc {6}{结论与讨论}{18}{0}{6}
+\beamer@sectionintoc {3}{定理推导和证明}{8}{0}{3}
+\beamer@sectionintoc {4}{个人工作和改进}{16}{0}{4}
+\beamer@sectionintoc {5}{结论与讨论}{18}{0}{5}

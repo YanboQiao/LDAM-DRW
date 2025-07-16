@@ -19,8 +19,8 @@ import torch.utils.data.distributed
 import torchvision.transforms as transforms
 import torchvision.models as models
 import torch.nn.functional as F
-from ldamModels import resnet_cifar
-from ldamModels import resnet_big
+from PaCoModels import resnet_cifar
+from PaCoModels import resnet_big
 from autoaug import CIFAR10Policy, Cutout
 from randaugment import rand_augment_transform, GaussianBlur
 import moco.loader
