@@ -21,6 +21,7 @@ import torchvision.models as models
 import torch.nn.functional as F
 from PaCoModels import resnet_cifar
 from PaCoModels import resnet_big
+from ldamLosses import LDAMLoss
 from autoaug import CIFAR10Policy, Cutout
 from randaugment import rand_augment_transform, GaussianBlur
 import moco.loader
@@ -44,6 +45,8 @@ parser.add_argument('-j', '--workers', default=0, type=int, metavar='N',
                     help='number of data loading workers (default: 32)')
 parser.add_argument('--epochs', default=400, type=int, metavar='N',
                     help='number of total epochs to run')
+parser.add_argument('--ldam-epochs', default=0, type=int,
+                    help='extra epochs using LDAM after PaCo training')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
 parser.add_argument('-b', '--batch-size', default=128, type=int,
@@ -384,6 +387,28 @@ def main_worker(gpu, ngpus_per_node, args):
                 }, is_best=False, filename=f'{args.root_model}/moco_ckpt_{(epoch+1):04d}.pth.tar')
 
 
+    # ------- LDAM fine-tuning phase -------
+    if args.ldam_epochs > 0:
+        ldam_criterion = LDAMLoss(train_dataset.get_cls_num_list(), max_m=0.5, s=30).cuda(args.gpu)
+        for extra_epoch in range(args.ldam_epochs):
+            epoch = args.epochs + extra_epoch
+            if args.distributed:
+                train_sampler.set_epoch(epoch)
+            adjust_learning_rate(optimizer, epoch, args)
+            train_ldam(train_loader, model, ldam_criterion, optimizer, epoch, args)
+            acc1 = validate(val_loader, train_loader, model, criterion_ce, args)
+            is_best = acc1 > best_acc1
+            best_acc1 = max(acc1, best_acc1)
+            output_best = 'Best Prec@1: %.3f\n' % (best_acc1)
+            print(output_best)
+            save_checkpoint({
+                        'epoch': epoch + 1,
+                        'arch': args.arch,
+                        'state_dict': model.state_dict(),
+                        'optimizer': optimizer.state_dict(),
+                    }, is_best=False, filename=f'{args.root_model}/ldam_ckpt.pth.tar')
+
+
 def train(train_loader, model, criterion, optimizer, epoch, args):
     batch_time = AverageMeter('Time', ':6.3f')
     data_time = AverageMeter('Data', ':6.3f')
@@ -429,6 +454,45 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         optimizer.step()
 
         # measure elapsed time
+        batch_time.update(time.time() - end)
+        end = time.time()
+
+        if i % args.print_freq == 0:
+            progress.display(i, args)
+
+
+def train_ldam(train_loader, model, criterion, optimizer, epoch, args):
+    batch_time = AverageMeter('Time', ':6.3f')
+    data_time = AverageMeter('Data', ':6.3f')
+    losses = AverageMeter('Loss', ':.4f')
+    top1 = AverageMeter('Acc@1', ':6.2f')
+    top5 = AverageMeter('Acc@5', ':6.2f')
+    progress = ProgressMeter(
+        len(train_loader),
+        [losses, top1, top5],
+        prefix="LDAM Epoch: [{}]".format(epoch))
+
+    model.train()
+    end = time.time()
+    for i, (images, target) in enumerate(train_loader):
+        data_time.update(time.time() - end)
+
+        if args.gpu is not None:
+            images = images[0].cuda(args.gpu, non_blocking=True)
+            target = target.cuda(args.gpu, non_blocking=True)
+
+        output = model._inference(images)
+        loss = criterion(output, target)
+
+        acc1, acc5 = accuracy(output, target, topk=(1, 5))
+        losses.update(loss.item(), images.size(0))
+        top1.update(acc1[0], images.size(0))
+        top5.update(acc5[0], images.size(0))
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
         batch_time.update(time.time() - end)
         end = time.time()
 
