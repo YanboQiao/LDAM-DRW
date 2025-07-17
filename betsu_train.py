@@ -17,7 +17,7 @@ from tensorboardX import SummaryWriter
 from sklearn.metrics import confusion_matrix
 from pacoUtils import *
 from imbalance_cifar import IMBALANCECIFAR10, IMBALANCECIFAR100
-from losses import LDAMLoss, PaCoLoss
+from ldamLosses import LDAMLoss, PaCoLoss
 from balanced_augmentation import BalancedAugmentedCIFAR
 
 # -------------------- CLI -------------------- #

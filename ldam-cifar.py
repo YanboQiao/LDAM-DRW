@@ -21,6 +21,7 @@ from ldamUtils import *
 from imbalance_cifar import IMBALANCECIFAR10, IMBALANCECIFAR100
 from ldamLosses import LDAMLoss, PaCoLoss, FocalLoss
 from balanced_augmentation import BalancedAugmentedCIFAR
+from collections import OrderedDict
 
 model_names = sorted(name for name in ldamModels.__dict__
     if name.islower() and not name.startswith("__")
@@ -71,6 +72,8 @@ parser.add_argument('--root_log',type=str, default='log')
 parser.add_argument('--root_model', type=str, default='checkpoint')
 parser.add_argument('--balanced_aug', action='store_true',
                     help='use BalancedAugmentedCIFAR as training set')
+parser.add_argument('--reload', default=None, type=str,
+                    help='load a pretrained backbone then start from epoch 0')
 
 best_acc1 = 0
 
@@ -118,7 +121,27 @@ def main_worker(gpu, ngpus_per_node, args):
     num_classes = 100 if args.dataset == 'cifar100' else 10
     use_norm = True if args.loss_type == 'LDAM' else False
     model = ldamModels.__dict__[args.arch](num_classes=num_classes, use_norm=use_norm)
+    if args.reload is not None and os.path.isfile(args.reload):
+        print(f"=> reloading backbone from '{args.reload}'")
+        state = torch.load(args.reload, map_location=args.device)
 
+        # 判断有无 'state_dict' 这一层包装
+        state_dict = state['state_dict'] if 'state_dict' in state else state
+
+        # 去掉可能的 'module.' 前缀
+        new_state = OrderedDict()
+        for k, v in state_dict.items():
+            new_k = k.replace('module.', '')  # DataParallel 产生的前缀
+            if new_k in model.state_dict() and model.state_dict()[new_k].shape == v.shape:
+                new_state[new_k] = v
+        missing, unexpected = model.load_state_dict(new_state, strict=False)
+        print(f"   >>> loaded {len(new_state)} layers, "
+            f"missed {len(missing)}, unexpected {len(unexpected)}")
+
+        # 保证从头训练：不恢复 optimizer / epoch
+        args.start_epoch = 0
+    else:
+        print(f"=> no reload checkpoint found at '{args.reload}'")
     # 只在cuda设备时调用cuda相关操作
     if args.device.type == 'cuda':
         if args.gpu is not None:
@@ -138,12 +161,16 @@ def main_worker(gpu, ngpus_per_node, args):
     print(f"Use device: {args.device} for training")
     if os.path.isfile(args.resume):
         print("=> loading checkpoint '{}'".format(args.resume))
-        checkpoint = torch.load(args.resume, map_location='cuda:0')
+        checkpoint = torch.load(args.resume, map_location=args.device)
+
+        # ① 权重真正加载
+        model.load_state_dict(checkpoint['state_dict'])
+
+        # ② 恢复优化器与计数器
+        optimizer.load_state_dict(checkpoint['optimizer'])
         args.start_epoch = checkpoint['epoch']
-        best_acc1 = checkpoint['best_acc1']
-        if args.gpu is not None:
-            # best_acc1 may be from a checkpoint from a different GPU
-            pass
+        best_acc1       = checkpoint['best_acc1']
+
     if args.device.type == 'cuda':
         if args.gpu is not None:
             torch.cuda.set_device(args.device)
@@ -234,18 +261,8 @@ def main_worker(gpu, ngpus_per_node, args):
             paco_criterion = PaCoLoss(cls_num_list, alpha=1.0, beta=1.0,
                                     gamma=1.0, temperature=0.2,
                                     base_temperature=0.2).to(args.device)
-        if epoch_idx <= 20:
-            # 1-20 → 纯 LDAM
-            criterion = ldam_criterion
-            use_paco  = False
-        elif 21 <= epoch_idx <= 160 and epoch_idx % 10 in (8, 9, 0, 1, 2):
-            # 21-160 中，每个 10 轮区间的最后3轮 (…8, …9, …0) → PaCo
-            criterion = paco_criterion
-            use_paco  = True
-        else:
-            # 其他情况 → LDAM
-            criterion = ldam_criterion
-            use_paco  = False
+        criterion = ldam_criterion
+        use_paco  = False
 
         if args.train_rule == 'None':
             train_sampler = None  

@@ -316,7 +316,7 @@ def main_worker(gpu, ngpus_per_node, args):
    
     if args.dataset == 'cifar100':
         val_dataset = datasets.CIFAR100(
-            root='./cifar100', 
+            root='./data', 
             train=False, 
             download=True, 
             transform=val_transform)
