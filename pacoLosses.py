@@ -208,3 +208,45 @@ class MultiTaskBLoss(nn.Module):
         loss_ce = F.cross_entropy(sup_logits, labels[:batch_size].squeeze())
         return loss_ce + self.alpha * loss
 
+class LDAMLoss(nn.Module):
+    """
+    兼容 PaCo & DRW 的 LDAM 损失
+    """
+    def __init__(self, cls_num_list, max_m=0.5, s=30, drw_beta=None):
+        super().__init__()
+        m = 1. / np.sqrt(np.maximum(cls_num_list, 1))
+        m = m * (max_m / m.max())                       # 论文公式
+        self.register_buffer("m_list", torch.tensor(m, dtype=torch.float32))
+        self.s = s
+
+        # ---------- DRW ----------
+        self._use_drw = False
+        self.register_buffer("class_weight",
+                             torch.ones(len(cls_num_list), dtype=torch.float32))
+        if drw_beta is not None:                        # 若希望预计算 DRW 权重
+            self.update_weights(cls_num_list, drw_beta)
+
+    # --------- 公共接口 ---------
+    def update_weights(self, cls_num_list, beta=0.999):
+        eff_num = 1.0 - np.power(beta, cls_num_list)
+        eff_num = eff_num / (1.0 - beta)
+        per_cls_w = eff_num.sum() / eff_num            # Eq.(2) in DRW
+        self.class_weight = torch.tensor(per_cls_w, dtype=torch.float32)
+
+    def enable_drw(self, flag: bool = True):
+        """在训练后期调用以启用/关闭 DRW 重加权"""
+        self._use_drw = flag
+
+    # --------- 前向传播 ---------
+    def forward(self, logits, target):
+        device, dtype = logits.device, logits.dtype
+        m_list = self.m_list.to(device=device, dtype=dtype)
+        margins = m_list[target]                       # (N,)
+
+        one_hot = torch.zeros_like(logits, dtype=dtype)
+        one_hot.scatter_(1, target.view(-1, 1), 1.0)
+
+        logits_adj = logits - one_hot * margins.unsqueeze(1) * self.s
+        weight = self.class_weight.to(device=device, dtype=dtype) \
+                 if self._use_drw else None
+        return F.cross_entropy(logits_adj, target, weight=weight)

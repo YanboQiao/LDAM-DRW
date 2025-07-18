@@ -19,7 +19,7 @@ from tensorboardX import SummaryWriter
 from sklearn.metrics import confusion_matrix
 from ldamUtils import *
 from imbalance_cifar import IMBALANCECIFAR10, IMBALANCECIFAR100
-from ldamLosses import LDAMLoss, PaCoLoss, FocalLoss
+from ldamLosses import LDAMLoss
 from balanced_augmentation import BalancedAugmentedCIFAR
 from collections import OrderedDict
 
@@ -77,6 +77,16 @@ parser.add_argument('--reload', default=None, type=str,
 
 best_acc1 = 0
 
+def load_from_moco(model, state_dict):
+    new_state = {}
+    for k, v in state_dict.items():
+        # 只保留 encoder_q.*，并去掉前缀
+        if k.startswith('encoder_q.'):
+            new_k = k[len('encoder_q.'):]
+            if new_k in model.state_dict() and v.shape == model.state_dict()[new_k].shape:
+                new_state[new_k] = v
+    missing, unexpected = model.load_state_dict(new_state, strict=False)
+    print(f'>>> Loaded {len(new_state)} layers | missing {len(missing)}, unexpected {len(unexpected)}')
 
 def main():
     args = parser.parse_args()
@@ -131,12 +141,13 @@ def main_worker(gpu, ngpus_per_node, args):
         # 去掉可能的 'module.' 前缀
         new_state = OrderedDict()
         for k, v in state_dict.items():
-            new_k = k.replace('module.', '')  # DataParallel 产生的前缀
+            # 先去掉 DataParallel 前缀，再去掉 MoCo 前缀
+            new_k = k.replace('module.', '').replace('encoder_q.', '')
             if new_k in model.state_dict() and model.state_dict()[new_k].shape == v.shape:
                 new_state[new_k] = v
         missing, unexpected = model.load_state_dict(new_state, strict=False)
-        print(f"   >>> loaded {len(new_state)} layers, "
-            f"missed {len(missing)}, unexpected {len(unexpected)}")
+        print(f'   >>> loaded {len(new_state)} layers, missed {len(missing)}, unexpected {len(unexpected)}')
+
 
         # 保证从头训练：不恢复 optimizer / epoch
         args.start_epoch = 0
@@ -164,7 +175,7 @@ def main_worker(gpu, ngpus_per_node, args):
         checkpoint = torch.load(args.resume, map_location=args.device)
 
         # ① 权重真正加载
-        model.load_state_dict(checkpoint['state_dict'])
+        load_from_moco(model, checkpoint['state_dict'])
 
         # ② 恢复优化器与计数器
         optimizer.load_state_dict(checkpoint['optimizer'])
@@ -227,10 +238,7 @@ def main_worker(gpu, ngpus_per_node, args):
         num_workers=args.workers, pin_memory=True)
     # ------------------------- 损失函数实例 -------------------------
 
-    ldam_criterion = LDAMLoss(cls_num_list=cls_num_list, max_m=0.5, s=30).to(args.device)
-    paco_criterion = PaCoLoss(cls_num_list=cls_num_list, alpha=1.0, beta=1.0,
-                              gamma=1.0, temperature=0.2, base_temperature=0.2).to(args.device)
-
+    criterion = LDAMLoss(cls_num_list=cls_num_list, max_m=0.5, s=30).to(args.device)
     # init log for training
     log_training = open(os.path.join(args.root_log, args.store_name, 'log_train.csv'), 'w')
     log_testing = open(os.path.join(args.root_log, args.store_name, 'log_test.csv'), 'w')
@@ -257,12 +265,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
             # 数据量 / 类别分布变了 → 重新计算 cls_num_list 与损失
             cls_num_list = train_dataset.get_cls_num_list()
-            ldam_criterion = LDAMLoss(cls_num_list, max_m=0.5, s=30).to(args.device)
-            paco_criterion = PaCoLoss(cls_num_list, alpha=1.0, beta=1.0,
-                                    gamma=1.0, temperature=0.2,
-                                    base_temperature=0.2).to(args.device)
-        criterion = ldam_criterion
-        use_paco  = False
+            criterion = LDAMLoss(cls_num_list, max_m=0.5, s=30).to(args.device)
 
         if args.train_rule == 'None':
             train_sampler = None  
@@ -288,35 +291,18 @@ def main_worker(gpu, ngpus_per_node, args):
         else:
             warnings.warn('Sample rule is not listed')
         
-        if args.loss_type == 'CE':
-            ce_criterion   = nn.CrossEntropyLoss(weight=per_cls_weights).to(args.device)
 
-        elif args.loss_type == 'LDAM':
+
+        if args.loss_type == 'LDAM':
             ldam_criterion = LDAMLoss(cls_num_list=cls_num_list,
                                       max_m=0.5, s=30,
                                       weight=per_cls_weights).to(args.device)
-
-        elif args.loss_type == 'Focal':
-            focal_criterion = FocalLoss(weight=per_cls_weights, gamma=1).to(args.device)
-
-        elif args.loss_type == 'PaCo':
-            paco_criterion = PaCoLoss(cls_num_list=cls_num_list,
-                                      alpha=1.0, beta=1.0, gamma=1.0,
-                                      temperature=0.2).to(args.device)
-
-        elif args.loss_type == 'PaCoLDAM':
-            ldam_criterion = LDAMLoss(cls_num_list=cls_num_list,
-                                      max_m=0.5, s=30,
-                                      weight=per_cls_weights).to(args.device)
-            paco_criterion = PaCoLoss(cls_num_list=cls_num_list,
-                                      alpha=1.0, beta=0.05, gamma=1.0,
-                                      temperature=0.2).to(args.device)
         else:
             warnings.warn('Loss type is not listed')
             return
 
         # train for one epoch
-        train(train_loader, model, criterion, optimizer, epoch, args, log_training, tf_writer, use_paco)
+        train(train_loader, model, criterion, optimizer, epoch, args, log_training, tf_writer)
         
         # evaluate on validation set
         acc1 = validate(val_loader, model, ldam_criterion, epoch, args, log_testing, tf_writer)
@@ -327,7 +313,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
         tf_writer.add_scalar('acc/test_top1_best', best_acc1, epoch)
         output_best = 'Best Prec@1: %.3f\n' % (best_acc1)
-        print(f"Current loss type: {'PaCo' if use_paco else 'LDAM'}")
+        print(f"Current loss type: {'LDAM'}")
         print(output_best)
         log_testing.write(output_best + '\n')
         log_testing.flush()
@@ -342,7 +328,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
 
 def train(train_loader, model, criterion, optimizer, epoch,
-          args, log_file, tf_writer, use_paco):
+          args, log_file, tf_writer):
     batch_time = AverageMeter('Time', ':6.3f')
     data_time  = AverageMeter('Data', ':6.3f')
     losses     = AverageMeter('Loss', ':.4e')
@@ -357,14 +343,10 @@ def train(train_loader, model, criterion, optimizer, epoch,
         inp    = inp.to(args.device, non_blocking=True)
         target = target.to(args.device, non_blocking=True)
 
-        if use_paco:                                      # PaCoLoss
-            logits, feats = model(inp, return_feat=True)
-            loss          = criterion(feats, logits, target)
-            out_for_acc   = logits
-        else:                                             # 其余损失
-            logits       = model(inp)
-            loss         = criterion(logits, target)
-            out_for_acc  = logits
+                                    # 其余损失
+        logits       = model(inp)
+        loss         = criterion(logits, target)
+        out_for_acc  = logits
 
         acc1, acc5 = accuracy(out_for_acc, target, topk=(1, 5))
         losses.update(loss.item(), inp.size(0))

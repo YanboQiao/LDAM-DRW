@@ -21,14 +21,13 @@ import torchvision.models as models
 import torch.nn.functional as F
 from PaCoModels import resnet_cifar
 from PaCoModels import resnet_big
-from ldamLosses import LDAMLoss
 from autoaug import CIFAR10Policy, Cutout
 from randaugment import rand_augment_transform, GaussianBlur
 import moco.loader
 import moco.builder
 from dataset.imbalance_cifar import ImbalanceCIFAR100
 import torchvision.datasets as datasets
-from pacoLosses import PaCoLoss
+from pacoLosses import PaCoLoss, LDAMLoss
 from pacoUtils import shot_acc
 
 
@@ -45,8 +44,6 @@ parser.add_argument('-j', '--workers', default=0, type=int, metavar='N',
                     help='number of data loading workers (default: 32)')
 parser.add_argument('--epochs', default=400, type=int, metavar='N',
                     help='number of total epochs to run')
-parser.add_argument('--ldam-epochs', default=0, type=int,
-                    help='extra epochs using LDAM after PaCo training')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
 parser.add_argument('-b', '--batch-size', default=128, type=int,
@@ -88,6 +85,8 @@ parser.add_argument('--multiprocessing-distributed', default=True, type=bool,
                          'N processes per node, which has N GPUs. This is the '
                          'fastest way to use PyTorch for either single node or '
                          'multi node data parallel training')
+parser.add_argument('--ldam-epochs', default=100, type=int,
+                    help='extra epochs using LDAM after PaCo training')
 
 # moco specific configs:
 parser.add_argument('--moco-dim', default=128, type=int,
@@ -127,12 +126,13 @@ parser.add_argument('--aug', default=None, type=str,
                     help='aug strategy')
 parser.add_argument('--num_classes', default=100, type=int,
                     help='num classes in dataset')
-parser.add_argument('--feat_dim', default=2048, type=int,
+parser.add_argument('--feat_dim', default=64, type=int,
                     help='last feature dim of backbone')
 
 
 def main():
     args = parser.parse_args()
+    args.multiprocessing_distributed = False
     args.root_model = f'{args.root_path}/{args.dataset}/{args.mark}'
     os.makedirs(args.root_model, exist_ok=True)
 
@@ -166,6 +166,18 @@ def main():
     else:
         # Simply call main_worker function
         main_worker(args.gpu, ngpus_per_node, args)
+
+
+def remove_module_prefix(state_dict):
+    # 用于去除 "module." 前缀
+    new_state_dict = {}
+    for k, v in state_dict.items():
+        if k.startswith('module.'):
+            new_state_dict[k[7:]] = v
+        else:
+            new_state_dict[k] = v
+    return new_state_dict
+
 
 
 def main_worker(gpu, ngpus_per_node, args):
@@ -240,7 +252,7 @@ def main_worker(gpu, ngpus_per_node, args):
         torch.cuda.set_device(args.gpu)
         model = model.cuda(args.gpu)
         # comment out the following line for debugging
-        raise NotImplementedError("Only DistributedDataParallel is supported.")
+        # raise NotImplementedError("Only DistributedDataParallel is supported.")
     else:
         # AllGather implementation (batch shuffle, queue update, etc.) in
         # this code only supports DistributedDataParallel.
@@ -249,7 +261,6 @@ def main_worker(gpu, ngpus_per_node, args):
     # define loss function (criterion) and optimizer
     criterion_ce = nn.CrossEntropyLoss().cuda(args.gpu)
     criterion = PaCoLoss(alpha=args.alpha, temperature=args.moco_t, K=args.moco_k, num_classes=args.num_classes).cuda(args.gpu) 
-    
     optimizer = torch.optim.SGD(model.parameters(), args.lr,
                                 momentum=args.momentum,
                                 weight_decay=args.weight_decay)
@@ -268,9 +279,10 @@ def main_worker(gpu, ngpus_per_node, args):
             model.load_state_dict(checkpoint['state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer'])
             print("=> loaded checkpoint '{}' (epoch {})"
-                  .format(args.resume, checkpoint['epoch']))
+                  .format(args.resume, checkpoint.get('epoch', 0)))
         else:
             print("=> no checkpoint found at '{}'".format(args.resume))
+
 
     cudnn.benchmark = True
 
@@ -351,7 +363,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
     if args.evaluate:
         print(" start evaualteion **** ")
-        validate(val_loader, model, criterion, args)
+        validate(val_loader, train_loader, model, criterion_ce, args)
         return
 
     best_acc1 = 0
@@ -389,24 +401,39 @@ def main_worker(gpu, ngpus_per_node, args):
 
     # ------- LDAM fine-tuning phase -------
     if args.ldam_epochs > 0:
-        ldam_criterion = LDAMLoss(train_dataset.get_cls_num_list(), max_m=0.5, s=30).cuda(args.gpu)
+        # 1) 先把优化器学习率写死为 0.03
+        for g in optimizer.param_groups:
+            g["lr"] = 0.0001
+
+        ldam_criterion = LDAMLoss(
+            train_dataset.get_cls_num_list(),
+            max_m=0.5, s=30, drw_beta=0.999        # 先准备好 DRW 权重
+        ).cuda(args.gpu)                           #
+
         for extra_epoch in range(args.ldam_epochs):
             epoch = args.epochs + extra_epoch
-            if args.distributed:
-                train_sampler.set_epoch(epoch)
-            adjust_learning_rate(optimizer, epoch, args)
-            train_ldam(train_loader, model, ldam_criterion, optimizer, epoch, args)
-            acc1 = validate(val_loader, train_loader, model, criterion_ce, args)
+            if extra_epoch == 50:                  # 50 轮后开启 DRW
+                ldam_criterion.enable_drw()
+            train_ldam(train_loader, model, ldam_criterion,
+                    optimizer, epoch, args)
+
+            # 2) **不要再调用 adjust_learning_rate**，保持恒定
+            train_ldam(train_loader, model, ldam_criterion,
+                    optimizer, epoch, args)
+
+            # 验证与保存
+            acc1 = validate(val_loader, train_loader, model,
+                            criterion_ce, args)
             is_best = acc1 > best_acc1
             best_acc1 = max(acc1, best_acc1)
-            output_best = 'Best Prec@1: %.3f\n' % (best_acc1)
-            print(output_best)
+            print(f'Best Prec@1: {best_acc1:.3f}')
             save_checkpoint({
-                        'epoch': epoch + 1,
-                        'arch': args.arch,
-                        'state_dict': model.state_dict(),
-                        'optimizer': optimizer.state_dict(),
-                    }, is_best=False, filename=f'{args.root_model}/ldam_ckpt.pth.tar')
+                'epoch': epoch + 1,
+                'arch': args.arch,
+                'state_dict': model.state_dict(),
+                'optimizer': optimizer.state_dict(),
+            }, is_best=False,
+            filename=f'{args.root_model}/ldam_ckpt.pth.tar')
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):
@@ -546,6 +573,7 @@ def validate(val_loader, train_loader, model, criterion, args):
         # TODO: this should also be done with the ProgressMeter
         open(args.root_model+"/"+args.mark+".log","a+").write(' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}\n'
               .format(top1=top1, top5=top5))
+    print(f'Val Top-1 Accuracy: {top1.avg:.2f}')
 
     return top1.avg
 
