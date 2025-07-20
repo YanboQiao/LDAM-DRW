@@ -1,6 +1,6 @@
 import torch
 
-ckpt = torch.load("data/cifar100/gpaco_cifar100_r32/moco_ckpt.pth.tar")
+ckpt = torch.load("data\cifar100\paco_ldam\ldam_ckpt.pth.tar")
 print(ckpt.keys())
 if "state_dict" in ckpt:
     ckpt = ckpt["state_dict"]
